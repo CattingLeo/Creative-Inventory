@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "creativestash",
+  "version": "${version}",
+  "name": "Creative Stash",
+  "description": "A creative-style item panel for survival. Works fully in singleplayer; on a real server it needs you to be OP.",
+  "authors": ["catting"],
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.catting.creativestash.CreativeStashClient"]
+  },
+  "mixins": ["creativestash.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
