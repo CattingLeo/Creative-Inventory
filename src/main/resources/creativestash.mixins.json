@@ -4,7 +4,8 @@
   "package": "com.catting.creativestash.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "AbstractContainerScreenAccessor"
+    "AbstractContainerScreenAccessor",
+    "AbstractRecipeBookScreenAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -1,15 +1,18 @@
 package com.catting.creativestash;
 
 import com.catting.creativestash.mixin.AbstractContainerScreenAccessor;
+import com.catting.creativestash.mixin.AbstractRecipeBookScreenAccessor;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.gui.screens.recipebook.RecipeBookComponent;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -70,6 +73,7 @@ public class CreativeStashClient implements ClientModInitializer {
     private static int scroll = 0;
     private static final List<Item> filtered = new ArrayList<>();
     private static final Set<String> quietedServers = new HashSet<>();
+    private static final List<AbstractWidget> hiddenWidgets = new ArrayList<>();
 
     // ----- layout: matches vanilla CreativeModeInventoryScreen's item-search tab exactly -----
     // (background texture is 195x136 visible in a 256x256 canvas; grid is a fixed 9x5,
@@ -101,29 +105,57 @@ public class CreativeStashClient implements ClientModInitializer {
             held = ItemStack.EMPTY;
             heldFromSlot = null;
 
-            int btnW = 24, btnH = 16;
-            int btnX = scaledWidth - btnW - 4;
-            int btnY = 4;
+            // positioned right next to vanilla's own recipe-book toggle button
+            // (confirmed via InventoryScreen.getRecipeBookButtonPosition: x = left+104),
+            // just above our own panel's top edge, so it tracks the inventory window
+            // instead of floating disconnected from it at the screen's outer corner
+            int btnW = 20, btnH = 14;
+            int btnX = left(inv) + 126;
+            int btnY = top(inv) - 12; // clears our own panel's top edge (panelY = top+4) with a small gap
+            Button[] toggleHolder = new Button[1];
             Button toggle = Button.builder(Component.literal("CM"), b -> {
                 open = !open;
                 if (open) {
+                    // close vanilla's recipe book - it renders/handles clicks fully
+                    // independently of the crafting grid, so covering the grid alone
+                    // wouldn't stop it from popping open over our panel
+                    RecipeBookComponent<?> recipeBook = ((AbstractRecipeBookScreenAccessor) inv).getRecipeBookComponent();
+                    if (recipeBook.isVisible()) recipeBook.toggleVisibility();
+
                     searchBox = new EditBox(client.font, panelX(inv) + 82, panelY(inv) + 6, 80, 9, Component.literal("Search"));
                     searchBox.setBordered(false);
                     searchBox.setTextColor(0xFFFFFFFF);
                     searchBox.setResponder(s -> { query = s; refreshFilter(); scroll = 0; });
                     Screens.getWidgets(screen).add(searchBox);
+
+                    // hide every other vanilla widget (recipe book button included) so
+                    // nothing clickable/visible is left poking out from under our panel
+                    hiddenWidgets.clear();
+                    for (AbstractWidget w : Screens.getWidgets(screen)) {
+                        if (w == toggleHolder[0] || w == searchBox || !w.visible) continue;
+                        w.visible = false;
+                        w.active = false;
+                        hiddenWidgets.add(w);
+                    }
                 } else {
+                    for (AbstractWidget w : hiddenWidgets) {
+                        w.visible = true;
+                        w.active = true;
+                    }
+                    hiddenWidgets.clear();
                     if (searchBox != null) Screens.getWidgets(screen).remove(searchBox);
                     searchBox = null;
                     cancelHeld(client, inv);
                 }
             }).bounds(btnX, btnY, btnW, btnH).build();
+            toggleHolder[0] = toggle;
             Screens.getWidgets(screen).add(toggle);
 
             ScreenEvents.remove(screen).register(s -> {
                 cancelHeld(client, inv);
                 open = false;
                 searchBox = null;
+                hiddenWidgets.clear();
             });
 
             ScreenMouseEvents.allowMouseScroll(screen).register((s, mx, my, h, v) -> {
@@ -258,14 +290,18 @@ public class CreativeStashClient implements ClientModInitializer {
         return accessor(inv).getHoveredSlot();
     }
 
-    // positioned to overlap the vanilla crafting grid + recipe book button so
-    // that area is fully covered (and its clicks intercepted) while CM is open
+    // InventoryMenu places the 2x2 crafting grid at local (98,18) and the result
+    // slot at (154,28) (confirmed via InventoryMenu's constructor); positioned
+    // here with a small margin so that whole area is fully covered and its
+    // clicks intercepted while CM is open. The actual recipe-book button doesn't
+    // need to be geometrically covered too - it's hidden directly, see the
+    // toggle button's onPress above.
     private int panelX(InventoryScreen inv) {
-        return left(inv) + 88;
+        return left(inv) + 90;
     }
 
     private int panelY(InventoryScreen inv) {
-        return top(inv) + 8;
+        return top(inv) + 4;
     }
 
     private boolean insidePanel(InventoryScreen inv, double mx, double my) {
