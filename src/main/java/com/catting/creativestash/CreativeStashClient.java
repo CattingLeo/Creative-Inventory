@@ -10,9 +10,10 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
-import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.entity.player.Inventory;
@@ -29,16 +30,20 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Creative Stash - client-side only. Adds a togglable side panel to the survival
- * inventory screen that lets you pick items like Creative mode, without being OP.
+ * Creative Stash - client-side only. Adds a togglable "CM" (cheat mode) panel,
+ * styled after vanilla's Creative Mode search tab, that replaces the crafting
+ * grid in the survival inventory screen and lets you pick items like Creative
+ * mode without being OP.
  *
  * SINGLEPLAYER: reaches directly into the local integrated server and edits your
  * inventory - no command, no cheats.
  *
- * A REAL SERVER (like Aternos): there is no local server to reach into, so this
- * falls back to sending "/give" and "/item replace" chat commands. Those commands
- * require permission level 2 (OP) - if you're not OP'd on that server, they will
- * silently fail there, same as typing them yourself would.
+ * A REAL SERVER or LAN world (unless you're the LAN host): there is no local
+ * server to reach into, so this falls back to sending "/give" and "/item
+ * replace" chat commands. Those require permission level 2 - on a real server
+ * you need to be OP'd; on a friend's "Open to LAN" world it works automatically
+ * as long as they opened it with "Allow Cheats" turned on (that grants every
+ * connected player command access for the session, vanilla behavior).
  */
 public class CreativeStashClient implements ClientModInitializer {
 
@@ -66,10 +71,25 @@ public class CreativeStashClient implements ClientModInitializer {
     private static final List<Item> filtered = new ArrayList<>();
     private static final Set<String> quietedServers = new HashSet<>();
 
-    // ----- layout -----
-    private static final int COLS = 8;
+    // ----- layout: matches vanilla CreativeModeInventoryScreen's item-search tab exactly -----
+    // (background texture is 195x136 visible in a 256x256 canvas; grid is a fixed 9x5,
+    // 18px cells starting at local (9,18); search box at local (82,6) sized 80x9;
+    // scrollbar track at local x=175, spanning y=18..130, thumb is the 12x15 sprite)
+    private static final Identifier SEARCH_BG = Identifier.withDefaultNamespace("textures/gui/container/creative_inventory/tab_item_search.png");
+    private static final Identifier SCROLLER_SPRITE = Identifier.withDefaultNamespace("container/creative_inventory/scroller");
+    private static final Identifier SCROLLER_DISABLED_SPRITE = Identifier.withDefaultNamespace("container/creative_inventory/scroller_disabled");
+    private static final int PANEL_WIDTH = 195;
+    private static final int PANEL_HEIGHT = 136;
+    private static final int NUM_COLS = 9;
+    private static final int NUM_ROWS = 5;
     private static final int CELL = 18;
-    private static final int PANEL_WIDTH = COLS * CELL + 12;
+    private static final int GRID_ORIGIN_X = 9;
+    private static final int GRID_ORIGIN_Y = 18;
+    private static final int TRASH_X = 9;
+    private static final int TRASH_Y = 112;
+    private static final int SCROLLBAR_X = 175;
+    private static final int SCROLLBAR_TOP = 18;
+    private static final int SCROLLBAR_TRAVEL = 95; // matches vanilla: track height (112) minus thumb height (15) minus 2px border
 
     @Override
     public void onInitializeClient() {
@@ -81,12 +101,15 @@ public class CreativeStashClient implements ClientModInitializer {
             held = ItemStack.EMPTY;
             heldFromSlot = null;
 
-            int btnX = left(inv) + width(inv) - 22;
-            int btnY = top(inv) + 4;
-            Button toggle = Button.builder(Component.literal("≡"), b -> {
+            int btnW = 24, btnH = 16;
+            int btnX = scaledWidth - btnW - 4;
+            int btnY = 4;
+            Button toggle = Button.builder(Component.literal("CM"), b -> {
                 open = !open;
                 if (open) {
-                    searchBox = new EditBox(client.font, panelX(inv) + 6, top(inv) + 4, PANEL_WIDTH - 12, 14, Component.literal("Search"));
+                    searchBox = new EditBox(client.font, panelX(inv) + 82, panelY(inv) + 6, 80, 9, Component.literal("Search"));
+                    searchBox.setBordered(false);
+                    searchBox.setTextColor(0xFFFFFFFF);
                     searchBox.setResponder(s -> { query = s; refreshFilter(); scroll = 0; });
                     Screens.getWidgets(screen).add(searchBox);
                 } else {
@@ -94,7 +117,7 @@ public class CreativeStashClient implements ClientModInitializer {
                     searchBox = null;
                     cancelHeld(client, inv);
                 }
-            }).bounds(btnX, btnY, 18, 18).build();
+            }).bounds(btnX, btnY, btnW, btnH).build();
             Screens.getWidgets(screen).add(toggle);
 
             ScreenEvents.remove(screen).register(s -> {
@@ -105,7 +128,7 @@ public class CreativeStashClient implements ClientModInitializer {
 
             ScreenMouseEvents.allowMouseScroll(screen).register((s, mx, my, h, v) -> {
                 if (!open || !insidePanel(inv, mx, my)) return true;
-                scroll = Math.max(0, scroll - (int) Math.signum(v));
+                scroll = clampScroll(scroll - (int) Math.signum(v));
                 return false;
             });
 
@@ -119,14 +142,16 @@ public class CreativeStashClient implements ClientModInitializer {
                     return false;
                 }
 
-                if (open && insidePanel(inv, mx, my)) {
-                    handlePanelClick(client, inv, mx, my, shift);
+                if (open && insideTrash(inv, mx, my)) {
+                    if (!inv.getMenu().getCarried().isEmpty()) {
+                        // deleting an item you already had picked up the normal vanilla way
+                        inv.getMenu().setCarried(ItemStack.EMPTY);
+                    }
                     return false;
                 }
 
-                if (open && insideTrash(inv, mx, my) && !inv.getMenu().getCarried().isEmpty()) {
-                    // deleting an item you already had picked up the normal vanilla way
-                    inv.getMenu().setCarried(ItemStack.EMPTY);
+                if (open && insidePanel(inv, mx, my)) {
+                    handlePanelClick(client, inv, mx, my, shift);
                     return false;
                 }
 
@@ -146,8 +171,18 @@ public class CreativeStashClient implements ClientModInitializer {
                 return true;
             });
 
+            // background layer first, so our own search box (a widget, rendered right
+            // after this) and vanilla's covered-up crafting/recipe-book widgets end up
+            // drawn on top of it rather than underneath
+            ScreenEvents.afterBackground(screen).register((s, graphics, mx, my, delta) -> {
+                if (open) renderPanelBackground(graphics, inv);
+            });
+
+            // foreground layer last: item icons, tooltip, floating held item, trash and
+            // scrollbar thumb all need to sit on top of everything else, including
+            // whatever vanilla widgets got covered by the background layer above
             ScreenEvents.afterExtract(screen).register((s, graphics, mx, my, delta) -> {
-                if (open) renderPanel(graphics, inv, mx, my);
+                if (open) renderPanelForeground(graphics, inv, mx, my);
                 if (!held.isEmpty()) {
                     graphics.item(held, mx - 8, my - 8);
                 }
@@ -219,54 +254,63 @@ public class CreativeStashClient implements ClientModInitializer {
         return accessor(inv).getTopPos();
     }
 
-    private static int width(InventoryScreen inv) {
-        return accessor(inv).getImageWidth();
-    }
-
-    private static int height(InventoryScreen inv) {
-        return accessor(inv).getImageHeight();
-    }
-
     private static Slot hoveredSlot(InventoryScreen inv) {
         return accessor(inv).getHoveredSlot();
     }
 
+    // positioned to overlap the vanilla crafting grid + recipe book button so
+    // that area is fully covered (and its clicks intercepted) while CM is open
     private int panelX(InventoryScreen inv) {
-        return left(inv) + width(inv) + 4;
+        return left(inv) + 88;
+    }
+
+    private int panelY(InventoryScreen inv) {
+        return top(inv) + 8;
     }
 
     private boolean insidePanel(InventoryScreen inv, double mx, double my) {
-        int x = panelX(inv), y = top(inv);
-        return mx >= x && mx < x + PANEL_WIDTH && my >= y && my < y + height(inv) - 20;
+        int x = panelX(inv), y = panelY(inv);
+        return mx >= x && mx < x + PANEL_WIDTH && my >= y && my < y + PANEL_HEIGHT;
     }
 
     private boolean insideTrash(InventoryScreen inv, double mx, double my) {
-        int x = panelX(inv) + 4;
-        int y = top(inv) + height(inv) - 20;
-        return mx >= x && mx < x + 16 && my >= y && my < y + 16;
+        int x = panelX(inv) + TRASH_X, y = panelY(inv) + TRASH_Y;
+        return mx >= x && mx < x + CELL && my >= y && my < y + CELL;
     }
 
     private int gridIndexAt(InventoryScreen inv, double mx, double my) {
-        int x = panelX(inv) + 6;
-        int y = top(inv) + 22;
+        int x = panelX(inv) + GRID_ORIGIN_X;
+        int y = panelY(inv) + GRID_ORIGIN_Y;
         int col = (int) ((mx - x) / CELL);
         int row = (int) ((my - y) / CELL);
-        if (col < 0 || col >= COLS || row < 0 || my < y) return -1;
-        return scroll * COLS + row * COLS + col;
+        if (col < 0 || col >= NUM_COLS || row < 0 || row >= NUM_ROWS || mx < x || my < y) return -1;
+        return scroll * NUM_COLS + row * NUM_COLS + col;
     }
 
-    private void renderPanel(GuiGraphicsExtractor graphics, InventoryScreen inv, int mouseX, int mouseY) {
-        int x = panelX(inv), y = top(inv);
-        graphics.fill(x, y, x + PANEL_WIDTH, y + height(inv), 0xC0101010);
+    private static int maxScroll() {
+        int totalRows = (filtered.size() + NUM_COLS - 1) / NUM_COLS;
+        return Math.max(0, totalRows - NUM_ROWS);
+    }
 
-        int gridX = x + 6, gridY = y + 22;
-        int rows = (height(inv) - 44) / CELL;
+    private static int clampScroll(int value) {
+        return Math.max(0, Math.min(value, maxScroll()));
+    }
 
-        for (int i = 0; i < rows * COLS; i++) {
-            int itemIndex = scroll * COLS + i;
+    private void renderPanelBackground(GuiGraphicsExtractor graphics, InventoryScreen inv) {
+        int x = panelX(inv), y = panelY(inv);
+        graphics.blit(RenderPipelines.GUI_TEXTURED, SEARCH_BG, x, y, 0f, 0f, PANEL_WIDTH, PANEL_HEIGHT, 256, 256);
+        graphics.text(Minecraft.getInstance().font, "Search Items", x + 8, y + 7, 0x404040);
+    }
+
+    private void renderPanelForeground(GuiGraphicsExtractor graphics, InventoryScreen inv, int mouseX, int mouseY) {
+        int x = panelX(inv), y = panelY(inv);
+        int gridX = x + GRID_ORIGIN_X, gridY = y + GRID_ORIGIN_Y;
+
+        for (int i = 0; i < NUM_ROWS * NUM_COLS; i++) {
+            int itemIndex = scroll * NUM_COLS + i;
             if (itemIndex >= filtered.size()) break;
-            int cx = gridX + (i % COLS) * CELL;
-            int cy = gridY + (i / COLS) * CELL;
+            int cx = gridX + (i % NUM_COLS) * CELL;
+            int cy = gridY + (i / NUM_COLS) * CELL;
             ItemStack stack = new ItemStack(filtered.get(itemIndex));
             graphics.item(stack, cx, cy);
             if (mouseX >= cx && mouseX < cx + 16 && mouseY >= cy && mouseY < cy + 16) {
@@ -274,13 +318,19 @@ public class CreativeStashClient implements ClientModInitializer {
             }
         }
 
+        int maxScroll = maxScroll();
+        Identifier scrollerSprite = maxScroll > 0 ? SCROLLER_SPRITE : SCROLLER_DISABLED_SPRITE;
+        float scrollOffs = maxScroll > 0 ? (float) scroll / maxScroll : 0f;
+        int thumbY = y + SCROLLBAR_TOP + Math.round(SCROLLBAR_TRAVEL * scrollOffs);
+        graphics.blitSprite(RenderPipelines.GUI_TEXTURED, scrollerSprite, x + SCROLLBAR_X, thumbY, 12, 15);
+
         // trash icon - a red X, like the delete slot in vanilla creative mode
-        int tx = x + 4, ty = y + height(inv) - 20;
-        graphics.fill(tx - 1, ty - 1, tx + 17, ty + 17, 0x80111111);
+        int tx = x + TRASH_X, ty = y + TRASH_Y;
+        graphics.fill(tx, ty, tx + CELL, ty + CELL, 0x80111111);
         var font = Minecraft.getInstance().font;
         String cross = "X";
         int textWidth = font.width(cross);
-        graphics.text(font, cross, tx + 8 - textWidth / 2, ty + 4, 0xFFFF5555, true);
+        graphics.text(font, cross, tx + CELL / 2 - textWidth / 2, ty + 5, 0xFFFF5555, true);
     }
 
     private void refreshFilter() {
@@ -292,6 +342,7 @@ public class CreativeStashClient implements ClientModInitializer {
                 filtered.add(item);
             }
         }
+        scroll = clampScroll(scroll);
     }
 
     // ---------- slot math ----------
@@ -326,7 +377,7 @@ public class CreativeStashClient implements ClientModInitializer {
         throw new IllegalArgumentException("Unsupported slot " + menuIndex);
     }
 
-    // ---------- give / place (singleplayer direct, real server via command) ----------
+    // ---------- give / place (singleplayer direct, real server/LAN via command) ----------
 
     /**
      * Real servers (and a LAN world for anyone who isn't the host) can only get items
