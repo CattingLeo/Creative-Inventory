@@ -266,16 +266,14 @@ public class CreativeStashClient implements ClientModInitializer {
         if (index < 0 || index >= filtered.size()) return;
         Item item = filtered.get(index);
 
+        // shift picks a full stack instead of a single item; ctrl gives straight to
+        // the inventory instead of picking it up on the cursor - the two combine,
+        // so ctrl+shift gives a full stack directly
+        int count = shift ? item.getDefaultMaxStackSize() : 1;
         if (ctrl) {
-            // straight into the inventory, no cursor step
-            giveStack(client, new ItemStack(item, item.getDefaultMaxStackSize()));
-        } else if (shift) {
-            // a full stack on the cursor, so it can be placed wherever instead of
-            // being auto-inserted
-            held = new ItemStack(item, item.getDefaultMaxStackSize());
-            heldFromSlot = null;
+            giveStack(client, new ItemStack(item, count));
         } else {
-            held = new ItemStack(item, 1);
+            held = new ItemStack(item, count);
             heldFromSlot = null;
         }
     }
