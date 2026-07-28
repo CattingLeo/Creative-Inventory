@@ -119,6 +119,8 @@ public class CreativeStashClient implements ClientModInitializer {
             Button toggle = Button.builder(Component.literal("CM"), b -> {
                 open = !open;
                 if (open) {
+                    scroll = 0;
+
                     // push the vanilla window aside (same trick vanilla's own recipe
                     // book uses) to make room instead of floating our panel over it
                     accessor(inv).setLeftPos(left(inv) + WINDOW_SHIFT);
@@ -183,6 +185,13 @@ public class CreativeStashClient implements ClientModInitializer {
                 if (!held.isEmpty()) {
                     resolveDrop(client, inv, mx, my);
                     return false;
+                }
+
+                if (open && insideSearchBox(inv, mx, my)) {
+                    // let vanilla's normal click handling through so it can focus
+                    // our EditBox - otherwise it never gets focus and typing does
+                    // nothing, since we'd be eating the click ourselves below
+                    return true;
                 }
 
                 if (open && insideTrash(inv, mx, my)) {
@@ -319,6 +328,11 @@ public class CreativeStashClient implements ClientModInitializer {
     private boolean insidePanel(InventoryScreen inv, double mx, double my) {
         int x = panelX(inv), y = panelY(inv);
         return mx >= x && mx < x + PANEL_WIDTH && my >= y && my < y + PANEL_HEIGHT;
+    }
+
+    private boolean insideSearchBox(InventoryScreen inv, double mx, double my) {
+        int x = panelX(inv) + 82, y = panelY(inv) + 6;
+        return mx >= x && mx < x + 80 && my >= y && my < y + 9;
     }
 
     private boolean insideTrash(InventoryScreen inv, double mx, double my) {
