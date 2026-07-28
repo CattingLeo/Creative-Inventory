@@ -105,13 +105,15 @@ public class CreativeStashClient implements ClientModInitializer {
             held = ItemStack.EMPTY;
             heldFromSlot = null;
 
-            // positioned right next to vanilla's own recipe-book toggle button
-            // (confirmed via InventoryScreen.getRecipeBookButtonPosition: x = left+104),
-            // just above our own panel's top edge, so it tracks the inventory window
-            // instead of floating disconnected from it at the screen's outer corner
+            // positioned right next to vanilla's own recipe-book toggle button.
+            // InventoryScreen.getRecipeBookButtonPosition() returns
+            // (leftPos+104, screenHeight/2-22); since topPos is standardly
+            // (screenHeight-imageHeight)/2, that resolves to local (104, imageHeight/2-22)
+            // = (104, 61) for the standard 166-tall inventory window - confirmed math,
+            // not a guess.
             int btnW = 20, btnH = 14;
             int btnX = left(inv) + 126;
-            int btnY = top(inv) - 12; // clears our own panel's top edge (panelY = top+4) with a small gap
+            int btnY = top(inv) + 61;
             Button[] toggleHolder = new Button[1];
             Button toggle = Button.builder(Component.literal("CM"), b -> {
                 open = !open;
@@ -290,14 +292,13 @@ public class CreativeStashClient implements ClientModInitializer {
         return accessor(inv).getHoveredSlot();
     }
 
-    // InventoryMenu places the 2x2 crafting grid at local (98,18) and the result
-    // slot at (154,28) (confirmed via InventoryMenu's constructor); positioned
-    // here with a small margin so that whole area is fully covered and its
-    // clicks intercepted while CM is open. The actual recipe-book button doesn't
-    // need to be geometrically covered too - it's hidden directly, see the
-    // toggle button's onPress above.
+    // Sits to the LEFT of the inventory window - the same side vanilla's own
+    // recipe book occupies when opened - rather than over the crafting grid,
+    // since "replace the recipes menu" meant the recipe book's search UI, not
+    // the crafting grid itself. We force the real recipe book closed (see the
+    // toggle button's onPress above) so the two never fight over that space.
     private int panelX(InventoryScreen inv) {
-        return left(inv) + 90;
+        return left(inv) - PANEL_WIDTH - 4;
     }
 
     private int panelY(InventoryScreen inv) {
