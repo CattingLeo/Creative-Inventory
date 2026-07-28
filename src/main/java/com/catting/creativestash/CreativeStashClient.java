@@ -4,6 +4,7 @@ import com.catting.creativestash.mixin.AbstractContainerScreenAccessor;
 import com.catting.creativestash.mixin.AbstractRecipeBookScreenAccessor;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.Minecraft;
@@ -71,6 +72,8 @@ public class CreativeStashClient implements ClientModInitializer {
     private static EditBox searchBox = null;
     private static String query = "";
     private static int scroll = 0;
+    private static int lastMouseX = 0;
+    private static int lastMouseY = 0;
     private static final List<Item> filtered = new ArrayList<>();
     private static final Set<String> quietedServers = new HashSet<>();
     private static final List<AbstractWidget> hiddenWidgets = new ArrayList<>();
@@ -181,6 +184,7 @@ public class CreativeStashClient implements ClientModInitializer {
                 double mx = event.x();
                 double my = event.y();
                 boolean shift = event.hasShiftDown();
+                boolean ctrl = event.hasControlDown();
 
                 if (!held.isEmpty()) {
                     resolveDrop(client, inv, mx, my);
@@ -203,7 +207,7 @@ public class CreativeStashClient implements ClientModInitializer {
                 }
 
                 if (open && insidePanel(inv, mx, my)) {
-                    handlePanelClick(client, inv, mx, my, shift);
+                    handlePanelClick(client, inv, mx, my, shift, ctrl);
                     return false;
                 }
 
@@ -223,6 +227,17 @@ public class CreativeStashClient implements ClientModInitializer {
                 return true;
             });
 
+            // dropping the item under the cursor straight into the world, same as
+            // vanilla's own creative search tab - keyDrop tracks whatever key the
+            // player actually has bound, not a hardcoded Q
+            ScreenKeyboardEvents.allowKeyPress(screen).register((s, keyEvent) -> {
+                if (!open || !client.options.keyDrop.matches(keyEvent)) return true;
+                int index = gridIndexAt(inv, lastMouseX, lastMouseY);
+                if (index < 0 || index >= filtered.size()) return true;
+                dropStack(client, new ItemStack(filtered.get(index), 1));
+                return false;
+            });
+
             // background layer first, so our own search box (a widget, rendered right
             // after this) and vanilla's covered-up crafting/recipe-book widgets end up
             // drawn on top of it rather than underneath
@@ -234,6 +249,8 @@ public class CreativeStashClient implements ClientModInitializer {
             // scrollbar thumb all need to sit on top of everything else, including
             // whatever vanilla widgets got covered by the background layer above
             ScreenEvents.afterExtract(screen).register((s, graphics, mx, my, delta) -> {
+                lastMouseX = mx;
+                lastMouseY = my;
                 if (open) renderPanelForeground(graphics, inv, mx, my);
                 if (!held.isEmpty()) {
                     graphics.item(held, mx - 8, my - 8);
@@ -244,13 +261,19 @@ public class CreativeStashClient implements ClientModInitializer {
 
     // ---------- click handling ----------
 
-    private void handlePanelClick(Minecraft client, InventoryScreen inv, double mx, double my, boolean shift) {
+    private void handlePanelClick(Minecraft client, InventoryScreen inv, double mx, double my, boolean shift, boolean ctrl) {
         int index = gridIndexAt(inv, mx, my);
         if (index < 0 || index >= filtered.size()) return;
         Item item = filtered.get(index);
 
-        if (shift) {
+        if (ctrl) {
+            // straight into the inventory, no cursor step
             giveStack(client, new ItemStack(item, item.getDefaultMaxStackSize()));
+        } else if (shift) {
+            // a full stack on the cursor, so it can be placed wherever instead of
+            // being auto-inserted
+            held = new ItemStack(item, item.getDefaultMaxStackSize());
+            heldFromSlot = null;
         } else {
             held = new ItemStack(item, 1);
             heldFromSlot = null;
@@ -502,6 +525,30 @@ public class CreativeStashClient implements ClientModInitializer {
             String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
             String name = client.player.getGameProfile().name();
             client.player.connection.sendCommand("give " + name + " " + itemId + " " + stack.getCount());
+        }
+    }
+
+    /**
+     * Drops straight into the world, skipping the inventory entirely - matches
+     * vanilla's own creative search tab behavior when you press the drop key
+     * over an item there. Singleplayer only: there's no clean vanilla command to
+     * spawn a dropped item entity without OP-level /summon and raw NBT, so on a
+     * real server or LAN (unless you're the host) this just gives it instead.
+     */
+    private static void dropStack(Minecraft client, ItemStack stack) {
+        if (client.player == null) return;
+        MinecraftServer sp = client.getSingleplayerServer();
+        if (sp != null) {
+            UUID uuid = client.player.getUUID();
+            ItemStack copy = stack.copy();
+            sp.execute(() -> {
+                PlayerList playerList = sp.getPlayerList();
+                ServerPlayer serverPlayer = playerList.getPlayer(uuid);
+                if (serverPlayer == null) return;
+                serverPlayer.drop(copy, false);
+            });
+        } else {
+            giveStack(client, stack);
         }
     }
 }
