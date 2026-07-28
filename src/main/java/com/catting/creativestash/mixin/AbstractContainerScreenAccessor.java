@@ -12,6 +12,11 @@ public interface AbstractContainerScreenAccessor {
     @Accessor("leftPos")
     int getLeftPos();
 
+    // lets us push the vanilla inventory window aside, the same way vanilla's own
+    // recipe book does, to make room for our panel instead of floating over it
+    @Accessor("leftPos")
+    void setLeftPos(int value);
+
     @Accessor("topPos")
     int getTopPos();
 

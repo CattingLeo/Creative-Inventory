@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "creativestash",
   "version": "${version}",
-  "name": "Creative Stash",
+  "name": "Creative Inventory",
   "description": "A creative-style item panel for survival. Works fully in singleplayer; on a real server it needs you to be OP.",
   "authors": ["catting"],
   "environment": "client",
