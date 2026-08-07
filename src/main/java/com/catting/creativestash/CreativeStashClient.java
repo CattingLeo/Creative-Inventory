@@ -97,7 +97,8 @@ public class CreativeStashClient implements ClientModInitializer {
     private static final int SCROLLBAR_X = 175;
     private static final int SCROLLBAR_TOP = 18;
     private static final int SCROLLBAR_TRAVEL = 95; // matches vanilla: track height (112) minus thumb height (15) minus 2px border
-    private static final int WINDOW_SHIFT = PANEL_WIDTH + 4; // how far we push the vanilla window aside to make room
+    private static final int PANEL_GAP = PANEL_WIDTH + 4; // space the panel + a small gap needs, used to position it relative to the window
+    private static final int WINDOW_PUSH = PANEL_GAP / 2; // the window only moves halfway - the rest comes from the panel extending further left, so the whole thing stays roughly centered instead of shoving the inventory far right
 
     @Override
     public void onInitializeClient() {
@@ -126,8 +127,8 @@ public class CreativeStashClient implements ClientModInitializer {
 
                     // push the vanilla window aside (same trick vanilla's own recipe
                     // book uses) to make room instead of floating our panel over it
-                    accessor(inv).setLeftPos(left(inv) + WINDOW_SHIFT);
-                    toggleHolder[0].setX(toggleHolder[0].getX() + WINDOW_SHIFT);
+                    accessor(inv).setLeftPos(left(inv) + WINDOW_PUSH);
+                    toggleHolder[0].setX(toggleHolder[0].getX() + WINDOW_PUSH);
 
                     // close vanilla's recipe book - it renders/handles clicks fully
                     // independently of the crafting grid, so covering the grid alone
@@ -151,8 +152,8 @@ public class CreativeStashClient implements ClientModInitializer {
                         hiddenWidgets.add(w);
                     }
                 } else {
-                    accessor(inv).setLeftPos(left(inv) - WINDOW_SHIFT);
-                    toggleHolder[0].setX(toggleHolder[0].getX() - WINDOW_SHIFT);
+                    accessor(inv).setLeftPos(left(inv) - WINDOW_PUSH);
+                    toggleHolder[0].setX(toggleHolder[0].getX() - WINDOW_PUSH);
 
                     for (AbstractWidget w : hiddenWidgets) {
                         w.visible = true;
@@ -334,12 +335,12 @@ public class CreativeStashClient implements ClientModInitializer {
     // Sits to the LEFT of the inventory window - the same side vanilla's own
     // recipe book occupies when opened - rather than over the crafting grid,
     // since "replace the recipes menu" meant the recipe book's search UI, not
-    // the crafting grid itself. The window itself gets pushed right by
-    // WINDOW_SHIFT while open (see the toggle button's onPress above), so by
-    // the time this is called leftPos already reflects that shift and this
-    // correctly lands back on the window's original, pre-shift position.
+    // the crafting grid itself. Always PANEL_GAP to the left of wherever the
+    // window currently is; the window only moves by WINDOW_PUSH (half of
+    // PANEL_GAP) while open, so the panel makes up the other half by extending
+    // further left instead of the window getting shoved all the way right.
     private int panelX(InventoryScreen inv) {
-        return left(inv) - WINDOW_SHIFT;
+        return left(inv) - PANEL_GAP;
     }
 
     private int panelY(InventoryScreen inv) {
